@@ -1,0 +1,28 @@
+{
+  "_comment": "이 파일은 예시/문서용입니다. 실제 app/capcut_template.json은 처음 빌드 시 capcut_compat.ensure_template()이 설치된 CapCut의 드래프트에서 자동 생성합니다(기기 식별자 포함이라 .gitignore됨). 아래 값은 구조 참고용 placeholder이며 그대로 쓰면 안 됩니다.",
+  "new_version": "171.0.0",
+  "platform": {
+    "app_id": 359289,
+    "app_source": "cc",
+    "device_id": "<자동생성>",
+    "hard_disk_id": "<자동생성>",
+    "mac_address": "<자동생성>",
+    "os": "mac",
+    "os_version": "<자동생성>"
+  },
+  "last_modified_platform": {
+    "app_id": 359289,
+    "app_source": "cc",
+    "device_id": "<자동생성>",
+    "hard_disk_id": "<자동생성>",
+    "mac_address": "<자동생성>",
+    "os": "mac",
+    "os_version": "<자동생성>"
+  },
+  "extra_keys": {
+    "draft_type": "video",
+    "function_assistant_info": {},
+    "smart_ads_info": {},
+    "uneven_animation_template_info": {}
+  }
+}

@@ -1,0 +1,6 @@
+pycapcut==0.0.3
+fastapi
+uvicorn[standard]
+python-multipart
+# pycapcut가 끌어오는 의존: pymediainfo, imageio, pillow, numpy
+# 추가로 시스템 의존: ffmpeg/ffprobe (brew install ffmpeg), libmediainfo (brew install libmediainfo)

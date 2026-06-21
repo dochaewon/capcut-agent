@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 캐시/업로드 (사용자 영상·음성 내용 포함)
+cache/
+uploads/
+
+# ★ 기기 식별자(device_id·mac·hard_disk_id) 포함 — 절대 커밋 금지
+#   각 환경에서 capcut_compat.ensure_template()가 자동 생성함
+app/capcut_template.json
+
+# 샘플/테스트 산출물 (생성물)
+samples/*.mp4
+samples/*.mov
+
+# OS / 에디터
+.DS_Store
+.idea/
+.vscode/
+
+# 로컬 실행 설정 (.venv 절대경로 등 환경 의존)
+.claude/launch.json

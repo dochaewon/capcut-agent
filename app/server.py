@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .asr import transcribe
 from .captions import make_captions
+from .config import capcut_draft_dir
 from .draft import build_jumpcut_draft
 from .filler import remove_spans, subtract
 from .silence import keep_segments
@@ -60,6 +61,14 @@ async def upload(file: UploadFile):
     return {"id": job_id, "name": safe_name}
 
 
+def _cleanup_upload(job_id: str) -> None:
+    """빌드 끝난 업로드 임시본 삭제. 드래프트가 하드링크로 데이터를 보유하므로 안전."""
+    import shutil
+    job_dir = os.path.join(_UPLOADS, job_id)
+    if os.path.isdir(job_dir):
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
 def _find_upload(job_id: str) -> str | None:
     job_dir = os.path.join(_UPLOADS, job_id)
     if os.path.isdir(job_dir):
@@ -67,6 +76,12 @@ def _find_upload(job_id: str) -> str | None:
         if files:
             return os.path.join(job_dir, files[0])
     return None
+
+
+@app.get("/exists/{name}")
+async def exists(name: str):
+    """드래프트 <name>_cut 가 이미 있는지 (건너뛰기용 — 업로드 전에 확인)."""
+    return {"exists": os.path.isdir(os.path.join(capcut_draft_dir(), f"{name}_cut"))}
 
 
 @app.get("/run/{job_id}")
@@ -133,6 +148,8 @@ async def run(job_id: str, noise: float | None = None,
             draft_path, out_len = await asyncio.to_thread(
                 build_jumpcut_draft, path, final_keeps, draft_name, caps)
             await _floor(t)
+            # 업로드 임시본 삭제(용량 누적 방지). 드래프트는 하드링크라 데이터 유지.
+            _cleanup_upload(job_id)
             yield _sse("stage", {"name": "draft", "status": "done", "stats": {
                 "결과 길이": f"{out_len:.1f}s", "자막": str(len(caps)),
                 "드래프트": draft_name,

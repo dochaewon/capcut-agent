@@ -85,6 +85,15 @@
   .err{display:none;color:#f87171;font-size:13px;margin-top:20px;
     background:#1a1212;border:1px solid #3a2020;border-radius:8px;padding:14px}
   .err.show{display:block}
+
+  /* 정지 버튼 */
+  .stopbar{display:none;align-items:center;gap:10px;margin-top:14px}
+  .stopbar.show{display:flex}
+  .stopbtn{background:#1a1212;border:1px solid #5a2a2a;color:#f87171;
+    border-radius:7px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
+  .stopbtn:hover{background:#241616;border-color:#7a3a3a}
+  .stopbtn:disabled{opacity:.5;cursor:default}
+  .stopbar .note{color:var(--mut);font-size:12px}
 </style>
 </head>
 <body>
@@ -107,6 +116,12 @@
     <label>무음 임계 <input id="noise" class="num" placeholder="auto" /> <span class="hint">dB · 비우면 자동</span></label>
     <label>최소 무음 <input id="silence" class="num" value="0.5" /> <span class="hint">s</span></label>
     <label>여유 <input id="pad" class="num" value="0.1" /> <span class="hint">s</span></label>
+    <label><input type="checkbox" id="skip" checked style="width:auto" /> 이미 만든 건 건너뛰기</label>
+  </div>
+
+  <div class="stopbar" id="stopbar">
+    <button class="stopbtn" id="stopbtn">⏹ 정지</button>
+    <span class="note" id="stopnote">진행 중인 것까지만 끝내고 멈춥니다</span>
   </div>
 
   <div class="queue" id="queue"></div>
@@ -127,7 +142,16 @@
 const $ = s => document.querySelector(s);
 const drop = $('#drop'), fileEl = $('#file'), stepsEl = $('#steps'), queueEl = $('#queue');
 const STAGE_LABEL = {silence:'무음 분석', asr:'음성 인식', filler:'잔말·NG', draft:'드래프트 생성'};
-let busy = false;
+let busy = false, stopRequested = false, currentES = null, currentReject = null;
+
+const stopbar = $('#stopbar'), stopbtn = $('#stopbtn');
+stopbtn.onclick = () => {
+  stopRequested = true;
+  stopbtn.disabled = true;
+  $('#stopnote').textContent = '정지 중… 진행 중인 영상까지만 마칩니다';
+  if(currentES) currentES.close();
+  if(currentReject) currentReject('중단됨');
+};
 
 drop.onclick = () => { if(!busy) fileEl.click(); };
 ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
@@ -176,34 +200,51 @@ async function enqueue(files){
       <span class="dot"></span><span class="qname">${f.name}</span>
       <span class="qinfo" id="qinfo-${i}">대기</span></div>`).join('');
 
-  busy = true; drop.classList.add('over');
-  let ok=0, fail=0;
+  busy = true; stopRequested = false; drop.classList.add('over');
+  stopbtn.disabled = false; $('#stopnote').textContent = '진행 중인 것까지만 끝내고 멈춥니다';
+  stopbar.classList.add('show');
+  let ok=0, fail=0, skip=0, stopped=false;
   for(let i=0;i<vids.length;i++){
+    if(stopRequested){ stopped=true; }
     const it=$('#q-'+i), info=$('#qinfo-'+i);
+    if(stopped){ it.dataset.st='wait'; info.textContent='중단됨'; continue; }
     it.dataset.st='run'; info.textContent='처리 중…';
     drop.querySelector('.big').innerHTML = `처리 중 (${i+1}/${vids.length}) <span class="chip">${vids[i].name}</span>`;
     stepsEl.innerHTML='';
     try{
       const r = await processOne(vids[i], baseNames[i]);
-      it.dataset.st='done';
-      info.innerHTML = `<span class="num">${r.total}s→${r.out_len}s · ${r.cut_pct}% 컷 · 자막 ${r.captions??0}</span>`;
-      ok++;
+      if(r.skipped){ it.dataset.st='done'; info.textContent='건너뜀 (이미 있음)'; skip++; }
+      else{
+        it.dataset.st='done';
+        info.innerHTML = `<span class="num">${r.total}s→${r.out_len}s · ${r.cut_pct}% 컷 · 자막 ${r.captions??0}</span>`;
+        ok++;
+      }
     }catch(e){
-      it.dataset.st='fail'; info.textContent='실패: '+e; fail++;
+      if(stopRequested){ it.dataset.st='wait'; info.textContent='중단됨'; stopped=true; }
+      else { it.dataset.st='fail'; info.textContent='실패: '+e; fail++; }
     }
   }
-  busy=false; drop.classList.remove('over'); stepsEl.innerHTML='';
+  busy=false; drop.classList.remove('over'); stepsEl.innerHTML=''; stopbar.classList.remove('show');
   drop.querySelector('.big').innerHTML = '영상 끌어놓기 <span class="hint" style="color:#5a5a5a">또는 클릭</span>';
   queueEl.insertAdjacentHTML('afterbegin',
-    `<div class="qhead">완료 — 성공 ${ok}${fail?` · 실패 ${fail}`:''}. CapCut을 열면 목록에 나타납니다.</div>`);
+    `<div class="qhead">${stopped?'정지됨':'완료'} — 성공 ${ok}${skip?` · 건너뜀 ${skip}`:''}${fail?` · 실패 ${fail}`:''}. CapCut을 열면 목록에 나타납니다.</div>`);
 }
 
 // 영상 1개: 업로드 → SSE. result로 resolve, error로 reject.
 function processOne(file, baseName){
   return new Promise(async (resolve,reject)=>{
+    if(stopRequested) return reject('중단됨');
+    // 이미 만든 건 건너뛰기 — 업로드 전에 존재 확인(큰 파일 업로드 낭비 방지)
+    if($('#skip').checked){
+      try{
+        const ex = await (await fetch('/exists/'+encodeURIComponent(baseName))).json();
+        if(ex.exists) return resolve({skipped:true});
+      }catch(_){}
+    }
     let up;
     try{ up = await (await fetch('/upload',{method:'POST',body:(()=>{const fd=new FormData();fd.append('file',file);return fd;})()})).json(); }
     catch(e){ return reject('업로드 실패'); }
+    if(stopRequested) return reject('중단됨');
 
     const q = new URLSearchParams();
     const noise=$('#noise').value.trim(); if(noise!=='') q.set('noise',noise);
@@ -212,12 +253,16 @@ function processOne(file, baseName){
 
     const es = new EventSource('/run/'+up.id+'?'+q.toString());
     let done=false;
+    currentES = es;                      // 정지 버튼이 닫을 수 있게 보관
+    currentReject = reject;
+    const finish = () => { currentES = null; currentReject = null; };
     es.addEventListener('stages', e=> renderStages(JSON.parse(e.data).stages));
     es.addEventListener('stage', e=>{ const d=JSON.parse(e.data); setStage(d.name,d.status,d.stats); });
-    es.addEventListener('result', e=>{ done=true; es.close(); resolve(JSON.parse(e.data)); });
+    es.addEventListener('result', e=>{ done=true; es.close(); finish(); resolve(JSON.parse(e.data)); });
     es.addEventListener('error', e=>{
-      es.close();
+      es.close(); finish();
       if(done) return;                      // 정상 종료 후의 close는 무시
+      if(stopRequested) return reject('중단됨');
       let msg='연결 끊김'; try{ msg=JSON.parse(e.data).message; }catch(_){}
       reject(msg);
     });

@@ -16,9 +16,38 @@ from .config import capcut_draft_dir
 from .silence import Segment
 
 
+def _place_media(src: str, dst: str) -> None:
+    """소재를 드래프트 폴더 안에 둔다.
+
+    같은 볼륨이면 **하드링크**(디스크 추가 사용 0 — 같은 데이터를 가리킴)로,
+    다른 볼륨(외장 등)이면 복사로 폴백. CapCut은 드래프트 경로의 정상 파일로 읽으므로
+    심볼릭링크와 달리 샌드박스 문제도 없다. 원본을 지워도 링크가 데이터를 유지한다.
+    """
+    if os.path.exists(dst):
+        os.remove(dst)
+    try:
+        os.link(src, dst)            # 하드링크: 데이터 복제 없음
+    except OSError:
+        shutil.copyfile(src, dst)    # 다른 파일시스템 등 → 복사
+
+
 def us(sec: float) -> int:
     """초 → 마이크로초 정수. (pycapcut에 숫자를 넘길 땐 항상 µs)"""
     return int(round(sec * 1_000_000))
+
+
+def _clip_range_us(material, start_s: float, dur_s: float) -> tuple[int, int]:
+    """소재에서 잘라올 (start_us, dur_us). 끝이 소재 길이를 넘지 않게 클램프.
+
+    무음감지는 ffprobe(format=duration), pycapcut 소재는 pymediainfo로 길이를 재서
+    수백 µs 차이가 난다. 마지막 보존구간이 영상 끝까지 닿으면 그 끝이 소재 길이를
+    살짝 넘어 pycapcut가 ValueError를 낸다 → 소재 길이로 잘라준다.
+    """
+    s_us, d_us = us(start_s), us(dur_s)
+    mat = getattr(material, "duration", None)  # µs
+    if mat is not None and s_us + d_us > mat:
+        d_us = mat - s_us
+    return s_us, d_us
 
 
 # 자막 스타일 (브이로그 톤: 작고 가늘게, 얇은 외곽선). 한 곳에서 튜닝.
@@ -61,20 +90,23 @@ def build_jumpcut_draft(
     materials_dir = os.path.join(draft_path, "materials")
     os.makedirs(materials_dir, exist_ok=True)
     local_media = os.path.join(materials_dir, os.path.basename(video_path))
-    shutil.copyfile(video_path, local_media)
+    _place_media(video_path, local_media)
 
     # 소재는 한 번만 생성해 재사용 (같은 파일을 여러 세그먼트가 참조)
     material = cc.VideoMaterial(local_media)
 
     timeline = 0.0  # 타임라인 커서(초)
     for k in keeps:
+        s_us, d_us = _clip_range_us(material, k.start, k.dur)
+        if d_us <= 0:
+            continue
         seg = cc.VideoSegment(
             material,
-            target_timerange=trange(us(timeline), us(k.dur)),
-            source_timerange=trange(us(k.start), us(k.dur)),
+            target_timerange=trange(us(timeline), d_us),
+            source_timerange=trange(s_us, d_us),
         )
         script.add_segment(seg)
-        timeline += k.dur
+        timeline += d_us / 1_000_000
 
     # 자막
     if captions:
@@ -138,17 +170,20 @@ def build_merged_draft(items: list[dict], draft_name: str,
             i += 1
         used_names.add(local_name)
         local_media = os.path.join(materials_dir, local_name)
-        shutil.copyfile(src, local_media)
+        _place_media(src, local_media)
         material = cc.VideoMaterial(local_media)
 
         clip_offset = timeline  # 이 클립이 합본 타임라인에서 시작하는 위치
         for k in it["keeps"]:
+            s_us, d_us = _clip_range_us(material, k.start, k.dur)
+            if d_us <= 0:
+                continue
             script.add_segment(cc.VideoSegment(
                 material,
-                target_timerange=trange(us(timeline), us(k.dur)),
-                source_timerange=trange(us(k.start), us(k.dur)),
+                target_timerange=trange(us(timeline), d_us),
+                source_timerange=trange(s_us, d_us),
             ))
-            timeline += k.dur
+            timeline += d_us / 1_000_000
         for c in (it.get("captions") or []):
             _add_caption(script, c["text"], clip_offset + c["start"], c["dur"])
 

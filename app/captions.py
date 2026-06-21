@@ -75,4 +75,17 @@ def make_captions(segs: list[dict], keeps: list[Segment],
             continue
         caps.append({"start": cs, "dur": ce - cs,
                      "text": chunk_korean(text)})
-    return caps
+
+    # 겹침 방지: whisper 세그먼트 시간이 겹치면 텍스트 트랙에서 SegmentOverlap 에러.
+    # 시작순 정렬 후, 각 자막 끝이 다음 자막 시작을 넘지 않게 자른다(1ms 여유).
+    caps.sort(key=lambda c: c["start"])
+    GAP = 0.001
+    fixed = []
+    for i, c in enumerate(caps):
+        start = c["start"]
+        end = start + c["dur"]
+        if i + 1 < len(caps):
+            end = min(end, caps[i + 1]["start"] - GAP)
+        if end - start >= min_dur:
+            fixed.append({"start": start, "dur": end - start, "text": c["text"]})
+    return fixed
